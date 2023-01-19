@@ -11,63 +11,71 @@ laneSensors.append(Pin(21, Pin.IN, Pin.PULL_DOWN))
 
 startSwitch = Pin(4, Pin.IN, Pin.PULL_DOWN)
 
+startTime = None
+finishTimes = [None,None,None,None]
+leaderboard = []
+refreshDisplay = False
+
+def startSwitchCallback(pin):
+    flags = pin.irq().flags()
+    now = time.ticks_us()
+    global startTime
+    # Check to see if interrupt is rising or falling edge. Rising edge will start race. Falling edge resets it.
+    if(startTime is None and (flags & Pin.IRQ_RISING)):
+        startTime=now
+    elif(flags & Pin.IRQ_FALLING):
+        startTime=None
+        print("Gate Closed")
+        for x in range(len(finishTimes)):
+            finishTimes[x] = None
+        leaderboard.clear()
+
+startSwitch.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=startSwitchCallback)
+
+def laneCallback(pin):
+    now = time.ticks_us()
+    # Get the index of the pin that fired interrupt. This will be the same as the lane index.
+    index = laneSensors.index(pin)
+    global finishTimes
+    global leaderboard
+    global refreshDisplay
+    # Make sure race is started and only the first finished time is stored. 
+    if((finishTimes[index] is None) & (startTime is not None)):
+        finishTimes[index]=now-startTime
+        leaderboard.append(index)
+        refreshDisplay = True
+
+for lane in laneSensors:
+    lane.irq(trigger=Pin.IRQ_FALLING, handler=laneCallback)
+
 # Show "LINE UP" on the displays
 def displayWaiting():
     clocks.showUP()
     digits.showLINE()
 #end displayWaiting()
 
-# When starting switch is pressed, blank all times & screens
-def gateIsClosed():
-    return startSwitch.value()
-#end gateIsOpen()
-
 def waitForStart():
-    while gateIsClosed():
-        time.sleep(0.001)
-    return
+    # Loop forever here until IRQ starts the race by setting the startTime
+    while(startTime is None):
+            pass
 #end waitForStart()
 
-def laneFinished(lane):
-    # Our sensor sends HI/True in the dark, and LO/False when illuminated.
-    # A dark lane means a car is blocking the laser - ie: Finished
-    return laneSensors[lane].value()
-#end laneFinished()
-
-def watchForFinishers(start):
+def watchForFinishers(): 
+    global refreshDisplay
     # Wipe the "LINE UP" message
     digits.blankAll()
-    clocks.blankAll()
-    # A lane is 'active' if it hasn't yet finished
-    activeLanes = [0,1,2,3]
-    leaderboard = []
-    finishTimes = [None,None,None,None]
-    while True:
+    clocks.blankAll()   
+    while startTime is not None:
         # If they close the gate, reset for next race:
-        if gateIsClosed():
-            return
-        #end if
-        
         # Gate's still open, so potentially cars are still racing
-        changed = False
-        for lane in activeLanes:
-            if laneFinished(lane):
-                # If so, add to leaderboard and record finishing time
-                leaderboard.append(lane)
-                #finishTimes[lane] = time.ticks_ms()
-                finishTimes[lane] = time.ticks_diff(time.ticks_ms(),start)
-                # Lane has finished, so is no longer 'active'
-                activeLanes.remove(lane)
-                changed = True
-            #end if
-        # end for
-        if changed:
+        if refreshDisplay:
             # Update displays, gold-first
             for rank in range(len(leaderboard)):
                 lane = leaderboard[rank]
                 digits.showX(rank+1,lane)
                 clocks.showTimeOnX(finishTimes[lane],lane)
             #end for
+            refreshDisplay = False
         #end if
         # Wait 1/10th of a scorable time unit:
         time.sleep(0.001)
@@ -82,10 +90,8 @@ def REPL():
         # Wait for gate to open
         waitForStart()
         # Gate opened, cars must be racing.
-        watchForFinishers(time.ticks_ms())
+        watchForFinishers()
     #end while
 #end REPL()
-        
+
 REPL()
-
-
