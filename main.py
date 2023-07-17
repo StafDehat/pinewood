@@ -9,47 +9,29 @@ laneSensors.append(Pin(19, Pin.IN, Pin.PULL_DOWN))
 laneSensors.append(Pin(20, Pin.IN, Pin.PULL_DOWN))
 laneSensors.append(Pin(21, Pin.IN, Pin.PULL_DOWN))
 
-startSwitch = Pin(4, Pin.IN, Pin.PULL_DOWN)
+startSwitch = Pin(4, Pin.IN, Pin.PULL_UP)
 
-startTime = None
 finishTimes = [None,None,None,None]
 leaderboard = []
-#refreshDisplay = False
-numDisplayed = 0
 
-def startSwitchCallback(pin):
-    flags = pin.irq().flags()
-    now = time.ticks_ms()
-    global startTime
-    global numDisplayed
-    # Check to see if interrupt is rising or falling edge. Falling edge will start race. Rising edge resets it.
-    if(startTime is None and (flags & Pin.IRQ_FALLING)):
-        startTime=now
-        numDisplayed=0
-    elif(flags & Pin.IRQ_RISING):
-        startTime=None
-        #print("Gate Closed")
-        for x in range(len(finishTimes)):
-            finishTimes[x] = None
-        leaderboard.clear()
-
-startSwitch.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=startSwitchCallback)
-
+# Use IRQ to detect finishers, for maximum granularity.
 def laneCallback(pin):
     now = time.ticks_ms()
-    # Get the index of the pin that fired interrupt. This will be the same as the lane index.
-    index = laneSensors.index(pin)
     global finishTimes
     global leaderboard
-#    global refreshDisplay
-    # Make sure race is started and only the first finished time is stored. 
-    if((finishTimes[index] is None) & (startTime is not None)):
-        finishTimes[index]=now-startTime
-        leaderboard.append(index)
-#        refreshDisplay = True
-
+    # Get the index of the pin that fired interrupt. This will be the same as the lane index.
+    index = laneSensors.index(pin)
+    # Only record the first time this beam gets broken
+    if(finishTimes[index] is not None):
+        return
+    #end if
+    finishTimes[index]=now
+    leaderboard.append(index)
+#End laneCallback()
+# Apply laneCallback() to each lane's laser-sensor IRQ:
 for lane in laneSensors:
     lane.irq(trigger=Pin.IRQ_RISING, handler=laneCallback)
+#end for
 
 # Show "LINE UP" on the displays
 def displayWaiting():
@@ -57,31 +39,41 @@ def displayWaiting():
     digits.showLINE()
 #end displayWaiting()
 
+# When starting switch is pressed, blank all times & screens
+def gateIsClosed():
+    return not startSwitch.value()
+#end gateIsOpen()
+
 def waitForStart():
-    # Loop forever here until IRQ starts the race by setting the startTime
-    while(startTime is None):
-        pass
+    while gateIsClosed():
+        time.sleep(0.001)
+    return
 #end waitForStart()
 
-def watchForFinishers(): 
-#    global refreshDisplay
-    global numDisplayed
+def watchForFinishers(startTime):
     global leaderboard
+    # Wipe record of previous race:
+    leaderboard.clear()
+    for x in range(len(finishTimes)):
+        finishTimes[x] = None
+    numDisplayed = 0
     # Wipe the "LINE UP" message
     digits.blankAll()
     clocks.blankAll()
-    while startTime is not None:
+    while True:
         # If they close the gate, reset for next race:
+        if gateIsClosed():
+            return
+        #end if
         # Gate's still open, so potentially cars are still racing
         if len(leaderboard) > numDisplayed:
-#        if refreshDisplay:
             # Update displays, gold-first
             for rank in range(len(leaderboard)):
                 lane = leaderboard[rank]
+                lapTime = time.ticks_diff(finishTimes[lane], startTime)
                 digits.showX(rank+1,lane)
-                clocks.showTimeOnX(finishTimes[lane],lane)
+                clocks.showTimeOnX(lapTime, lane)
             #end for
-#            refreshDisplay = False
             numDisplayed += 1;
         #end if
     #end while
@@ -95,7 +87,7 @@ def REPL():
         # Wait for gate to open
         waitForStart()
         # Gate opened, cars must be racing.
-        watchForFinishers()
+        watchForFinishers(time.ticks_ms())
     #end while
 #end REPL()
 
