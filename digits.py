@@ -13,7 +13,7 @@ display.fill(0)
 display.show()
 
 def showX(digit, pos):
-    print("Displaying digit %d in lane %d" % (digit, pos))
+    #print("Displaying digit %d in lane %d" % (digit, pos))
     if digit == 1:
         show1(pos)
     elif digit == 2:
